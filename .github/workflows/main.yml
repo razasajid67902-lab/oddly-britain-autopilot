@@ -14,71 +14,136 @@ jobs:
         run: |
           python - <<'PY'
           import os
-          import urllib.request
           import json
+          import time
+          import urllib.request
+          import urllib.error
 
           key = os.environ["GEMINI_API_KEY"]
+
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
           prompt = """
           You are the content director for a YouTube channel called Oddly Britain.
 
-          Niche:
-          British weird history, mysteries, bizarre places, unusual British culture
-          and unbelievable true stories.
+          Channel niche:
+          British weird history, strange mysteries, bizarre places,
+          unusual British culture and unbelievable true stories.
 
-          Create ONE completely original long-form YouTube video concept for a UK
-          audience, around 6-10 minutes.
+          Create ONE original YouTube video for a UK audience.
 
-          Avoid famous overused topics. Choose something genuinely intriguing.
+          Length: 6-10 minutes.
 
-          Return exactly these sections:
+          Choose an interesting topic that is not extremely overused.
+
+          The video must be:
+          - original
+          - entertaining
+          - factual in tone
+          - conversational British English
+          - suitable for monetization
+          - not copied from another creator
+          - not repetitive
+
+          Return exactly:
 
           TITLE:
           HOOK:
-          VIDEO DESCRIPTION:
+          DESCRIPTION:
           TAGS:
           SCRIPT:
 
-          The script must be engaging, factual in tone, conversational British English,
-          and structured with a strong hook, curiosity gaps, storytelling and a satisfying
-          ending.
+          The script should have:
+          1. A powerful opening hook.
+          2. Strong curiosity throughout.
+          3. Storytelling.
+          4. Interesting details.
+          5. A satisfying ending.
 
-          Do not invent facts or present fictional claims as true.
+          Do not knowingly invent facts.
+          If something is uncertain, clearly say it is uncertain.
           """
-
-          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
           data = {
               "contents": [
                   {
                       "parts": [
-                          {"text": prompt}
+                          {
+                              "text": prompt
+                          }
                       ]
                   }
-              ]
+              ],
+              "generationConfig": {
+                  "temperature": 0.8,
+                  "maxOutputTokens": 12000
+              }
           }
 
-          req = urllib.request.Request(
-              url,
-              data=json.dumps(data).encode("utf-8"),
-              headers={
-                  "Content-Type": "application/json",
-                  "x-goog-api-key": key
-              },
-              method="POST"
-          )
+          headers = {
+              "Content-Type": "application/json",
+              "x-goog-api-key": key
+          }
 
-          with urllib.request.urlopen(req) as response:
-              result = json.load(response)
+          last_error = None
 
-          text = result["candidates"][0]["content"]["parts"][0]["text"]
+          for attempt in range(1, 6):
+              try:
+                  print(f"Gemini attempt {attempt}/5...")
 
-          os.makedirs("output", exist_ok=True)
+                  req = urllib.request.Request(
+                      url,
+                      data=json.dumps(data).encode("utf-8"),
+                      headers=headers,
+                      method="POST"
+                  )
 
-          with open("output/content.txt", "w", encoding="utf-8") as f:
-              f.write(text)
+                  with urllib.request.urlopen(req, timeout=120) as response:
+                      result = json.load(response)
 
-          print(text)
+                  text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+                  os.makedirs("output", exist_ok=True)
+
+                  with open(
+                      "output/content.txt",
+                      "w",
+                      encoding="utf-8"
+                  ) as f:
+                      f.write(text)
+
+                  print("SUCCESS: Content generated.")
+                  print(text)
+
+                  break
+
+              except urllib.error.HTTPError as e:
+                  last_error = e
+                  print(f"Gemini HTTP error: {e.code}")
+
+                  if e.code in [429, 500, 502, 503, 504]:
+                      if attempt < 5:
+                          wait = attempt * 10
+                          print(f"Temporary error. Waiting {wait} seconds...")
+                          time.sleep(wait)
+                          continue
+
+                  raise
+
+              except Exception as e:
+                  last_error = e
+                  print(f"Temporary error: {e}")
+
+                  if attempt < 5:
+                      wait = attempt * 10
+                      print(f"Retrying in {wait} seconds...")
+                      time.sleep(wait)
+                  else:
+                      raise
+
+          else:
+              raise last_error
+
           PY
 
       - name: Save generated content
