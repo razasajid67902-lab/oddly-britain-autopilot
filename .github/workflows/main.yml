@@ -4,19 +4,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  create-video-assets:
+  create-video:
     runs-on: ubuntu-latest
 
     steps:
 
-      # =========================
+      # ============================================================
       # 1. GENERATE SCRIPT
-      # =========================
+      # ============================================================
 
       - name: Generate Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
         run: |
+          set -e
+
           python - <<'PY'
           import os
           import json
@@ -37,13 +40,17 @@ jobs:
           prompt = """
           You are the content director for a YouTube channel called Oddly Britain.
 
-          NICHE:
+          CHANNEL NICHE:
           British weird history, strange mysteries, bizarre places,
           unusual British culture and unbelievable true stories.
 
-          Create ONE original YouTube video for a UK audience.
+          AUDIENCE:
+          Mainly United Kingdom, with United States and worldwide appeal.
 
-          Target length: 6-10 minutes.
+          Create ONE original YouTube documentary-style video.
+
+          Target length:
+          6-10 minutes.
 
           Choose an intriguing topic that is not extremely overused.
 
@@ -56,7 +63,7 @@ jobs:
           - not copied from another creator
           - not repetitive
 
-          Return exactly these sections:
+          Return EXACTLY:
 
           TITLE:
           HOOK:
@@ -64,13 +71,13 @@ jobs:
           TAGS:
           SCRIPT:
 
-          The SCRIPT must be a complete narration suitable for a 6-10 minute
-          documentary-style YouTube video.
+          The SCRIPT must be a complete narration.
 
           Start with a powerful hook.
-          Maintain curiosity.
+          Build curiosity.
           Use storytelling.
           Include interesting details.
+          Keep the viewer interested.
           End with a satisfying conclusion.
 
           Do not knowingly invent facts.
@@ -102,13 +109,13 @@ jobs:
                   "v1beta/models/" + model + ":generateContent"
               )
 
-              print("Trying model:", model)
+              print("Trying script model:", model)
 
               for attempt in range(1, 5):
 
                   try:
 
-                      req = urllib.request.Request(
+                      request = urllib.request.Request(
                           url,
                           data=json.dumps(data).encode("utf-8"),
                           headers={
@@ -119,7 +126,7 @@ jobs:
                       )
 
                       with urllib.request.urlopen(
-                          req,
+                          request,
                           timeout=180
                       ) as response:
 
@@ -131,7 +138,9 @@ jobs:
                       )
 
                       if len(text.strip()) < 500:
-                          raise Exception("Generated response is too short.")
+                          raise Exception(
+                              "Gemini returned an unexpectedly short response."
+                          )
 
                       os.makedirs("output", exist_ok=True)
 
@@ -139,60 +148,81 @@ jobs:
                           "output/content.txt",
                           "w",
                           encoding="utf-8"
-                      ) as f:
-                          f.write(text)
+                      ) as file:
 
-                      print("SCRIPT SUCCESS using", model)
+                          file.write(text)
+
+                      print("SCRIPT GENERATED SUCCESSFULLY")
+                      print("Model:", model)
 
                       success = True
                       break
 
-                  except urllib.error.HTTPError as e:
+                  except urllib.error.HTTPError as error:
 
                       print(
-                          "HTTP error",
-                          e.code,
-                          "on",
-                          model,
-                          "attempt",
+                          "HTTP error:",
+                          error.code,
+                          "Attempt:",
                           attempt
                       )
 
-                      if e.code not in [408, 429, 500, 502, 503, 504]:
+                      if error.code not in [
+                          408, 429, 500, 502, 503, 504
+                      ]:
                           break
 
                       if attempt < 4:
-                          wait = (2 ** attempt) + random.uniform(0, 3)
-                          print("Waiting", round(wait, 1), "seconds...")
+
+                          wait = (
+                              (2 ** attempt)
+                              + random.uniform(0, 3)
+                          )
+
+                          print(
+                              "Temporary error. Waiting",
+                              round(wait, 1),
+                              "seconds..."
+                          )
+
                           time.sleep(wait)
 
-                  except Exception as e:
+                  except Exception as error:
 
-                      print("Error:", e)
+                      print("Error:", error)
 
                       if attempt < 4:
-                          wait = (2 ** attempt) + random.uniform(0, 3)
+
+                          wait = (
+                              (2 ** attempt)
+                              + random.uniform(0, 3)
+                          )
+
                           time.sleep(wait)
 
               if success:
                   break
 
           if not success:
+
               raise Exception(
-                  "All Gemini script models failed after retries."
+                  "All Gemini script models failed."
               )
 
           PY
 
 
-      # =========================
-      # 2. GENERATE VOICE
-      # =========================
+      # ============================================================
+      # 2. GENERATE BRITISH AI VOICE
+      # ============================================================
 
       - name: Generate British Voice
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
         run: |
+          set -e
+
           python - <<'PY'
           import os
           import json
@@ -208,39 +238,54 @@ jobs:
               "output/content.txt",
               "r",
               encoding="utf-8"
-          ) as f:
-              content = f.read()
+          ) as file:
+
+              content = file.read()
 
           if "SCRIPT:" in content:
-              script = content.split("SCRIPT:", 1)[1].strip()
+
+              script = content.split(
+                  "SCRIPT:",
+                  1
+              )[1].strip()
+
           else:
-              script = content
+
+              script = content.strip()
 
           if not script:
-              raise Exception("SCRIPT is empty.")
 
-          # Current Gemini TTS models.
+              raise Exception(
+                  "No narration script found."
+              )
+
           tts_models = [
               "gemini-3.8-flash-lite-tts",
               "gemini-3.8-flash-tts"
           ]
 
-          data = {
+          base_payload = {
+
               "input": [
                   {
                       "type": "user_input",
+
                       "content": [
                           {
                               "type": "text",
+
                               "text": script,
+
                               "annotations": [
                                   {
                                       "type": "speech_metadata",
+
                                       "style": (
                                           "Natural British English documentary "
-                                          "narrator. Warm, confident, mysterious "
-                                          "and engaging. Clear pronunciation, "
-                                          "natural pacing and expressive delivery."
+                                          "narrator. Warm, confident, mysterious, "
+                                          "expressive and engaging. Clear British "
+                                          "pronunciation with natural pacing. "
+                                          "Build suspense during mysterious moments."
                                       )
                                   }
                               ]
@@ -248,9 +293,11 @@ jobs:
                       ]
                   }
               ],
+
               "response_format": {
                   "type": "audio"
               },
+
               "generation_config": {
                   "speech_config": [
                       {
@@ -264,32 +311,40 @@ jobs:
 
           for model in tts_models:
 
+              print(
+                  "Trying voice model:",
+                  model
+              )
+
+              payload = dict(base_payload)
+
+              payload["model"] = model
+
               url = (
                   "https://generativelanguage.googleapis.com/"
                   "v1beta/interactions"
               )
 
-              payload = dict(data)
-              payload["model"] = model
-
-              print("Trying TTS model:", model)
-
               for attempt in range(1, 5):
 
                   try:
 
-                      req = urllib.request.Request(
+                      request = urllib.request.Request(
                           url,
-                          data=json.dumps(payload).encode("utf-8"),
+                          data=json.dumps(
+                              payload
+                          ).encode("utf-8"),
+
                           headers={
                               "Content-Type": "application/json",
                               "x-goog-api-key": KEY
                           },
+
                           method="POST"
                       )
 
                       with urllib.request.urlopen(
-                          req,
+                          request,
                           timeout=300
                       ) as response:
 
@@ -297,41 +352,72 @@ jobs:
 
                       audio_data = None
 
-                      # Current Interactions API stores audio
-                      # inside model_output steps.
-                      for step in result.get("steps", []):
-                          if step.get("type") == "model_output":
+                      for step in result.get(
+                          "steps",
+                          []
+                      ):
 
-                              for item in step.get("content", []):
+                          if step.get(
+                              "type"
+                          ) == "model_output":
 
-                                  if item.get("type") == "audio":
-                                      audio_data = item.get("data")
+                              for item in step.get(
+                                  "content",
+                                  []
+                              ):
 
-                      # Also support convenience-style response.
+                                  if item.get(
+                                      "type"
+                                  ) == "audio":
+
+                                      audio_data = item.get(
+                                          "data"
+                                      )
+
                       if not audio_data:
-                          output_audio = result.get("output_audio")
 
-                          if output_audio:
-                              audio_data = output_audio.get("data")
-
-                      if not audio_data:
-                          raise Exception(
-                              "No audio data returned by Gemini."
+                          output_audio = result.get(
+                              "output_audio"
                           )
 
-                      audio = base64.b64decode(audio_data)
+                          if output_audio:
 
-                      os.makedirs("output", exist_ok=True)
+                              audio_data = (
+                                  output_audio.get(
+                                      "data"
+                                  )
+                              )
+
+                      if not audio_data:
+
+                          raise Exception(
+                              "No audio data returned."
+                          )
+
+                      audio = base64.b64decode(
+                          audio_data
+                      )
+
+                      os.makedirs(
+                          "output",
+                          exist_ok=True
+                      )
 
                       with open(
                           "output/voice.wav",
                           "wb"
-                      ) as f:
-                          f.write(audio)
+                      ) as file:
+
+                          file.write(audio)
+
+                      if len(audio) < 1000:
+
+                          raise Exception(
+                              "Audio file is unexpectedly small."
+                          )
 
                       print(
-                          "VOICE SUCCESS using",
-                          model
+                          "BRITISH VOICE GENERATED SUCCESSFULLY"
                       )
 
                       print(
@@ -340,56 +426,471 @@ jobs:
                       )
 
                       success = True
+
                       break
 
-                  except urllib.error.HTTPError as e:
+                  except urllib.error.HTTPError as error:
 
                       print(
-                          "TTS HTTP error",
-                          e.code,
-                          "on",
-                          model,
-                          "attempt",
+                          "TTS HTTP error:",
+                          error.code,
+                          "Attempt:",
                           attempt
                       )
 
-                      if e.code not in [408, 429, 500, 502, 503, 504]:
+                      if error.code not in [
+                          408, 429, 500, 502, 503, 504
+                      ]:
                           break
 
                       if attempt < 4:
-                          wait = (2 ** attempt) + random.uniform(0, 3)
+
+                          wait = (
+                              (2 ** attempt)
+                              + random.uniform(0, 3)
+                          )
+
                           print(
                               "Waiting",
                               round(wait, 1),
                               "seconds..."
                           )
+
                           time.sleep(wait)
 
-                  except Exception as e:
+                  except Exception as error:
 
-                      print("TTS error:", e)
+                      print(
+                          "TTS error:",
+                          error
+                      )
 
                       if attempt < 4:
-                          wait = (2 ** attempt) + random.uniform(0, 3)
+
+                          wait = (
+                              (2 ** attempt)
+                              + random.uniform(0, 3)
+                          )
+
                           time.sleep(wait)
 
               if success:
                   break
 
           if not success:
+
               raise Exception(
-                  "All Gemini TTS models failed after retries."
+                  "All Gemini TTS models failed."
               )
 
           PY
 
 
-      # =========================
-      # 3. SAVE FILES
-      # =========================
+      # ============================================================
+      # 3. INSTALL FFMPEG
+      # ============================================================
 
-      - name: Save Video Assets
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+
+
+      # ============================================================
+      # 4. PREPARE SCRIPT FOR VIDEO
+      # ============================================================
+
+      - name: Prepare Video Scenes
+        run: |
+          set -e
+
+          mkdir -p output/scenes
+
+          python - <<'PY'
+          import os
+          import re
+
+          with open(
+              "output/content.txt",
+              "r",
+              encoding="utf-8"
+          ) as file:
+
+              content = file.read()
+
+          title = "Oddly Britain"
+
+          for line in content.splitlines():
+
+              if line.strip().upper().startswith(
+                  "TITLE:"
+              ):
+
+                  title = line.split(
+                      ":",
+                      1
+                  )[1].strip()
+
+                  break
+
+          if "SCRIPT:" in content:
+
+              script = content.split(
+                  "SCRIPT:",
+                  1
+              )[1]
+
+          else:
+
+              script = content
+
+          script = re.sub(
+              r'\s+',
+              ' ',
+              script
+          ).strip()
+
+          if len(script) < 200:
+
+              raise Exception(
+                  "Script is too short."
+              )
+
+          sentences = re.split(
+              r'(?<=[.!?])\s+',
+              script
+          )
+
+          sentences = [
+              s.strip()
+              for s in sentences
+              if len(s.strip()) > 15
+          ]
+
+          if not sentences:
+
+              raise Exception(
+                  "Could not split script."
+              )
+
+          # Create 8 scenes where possible.
+          scene_count = min(
+              8,
+              len(sentences)
+          )
+
+          scene_count = max(
+              1,
+              scene_count
+          )
+
+          chunks = [
+              []
+              for _ in range(scene_count)
+          ]
+
+          for index, sentence in enumerate(
+              sentences
+          ):
+
+              scene_index = int(
+                  index * scene_count
+                  / len(sentences)
+              )
+
+              if scene_index >= scene_count:
+                  scene_index = scene_count - 1
+
+              chunks[scene_index].append(
+                  sentence
+              )
+
+          with open(
+              "output/title.txt",
+              "w",
+              encoding="utf-8"
+          ) as file:
+
+              file.write(title)
+
+          for number, chunk in enumerate(
+              chunks,
+              1
+          ):
+
+              text = " ".join(chunk)
+
+              # Wrap text for vertical video.
+              words = text.split()
+
+              lines = []
+
+              current = ""
+
+              for word in words:
+
+                  test = (
+                      current + " " + word
+                  ).strip()
+
+                  if len(test) > 38:
+
+                      if current:
+                          lines.append(
+                              current
+                          )
+
+                      current = word
+
+                  else:
+
+                      current = test
+
+              if current:
+                  lines.append(
+                      current
+                  )
+
+              final_text = "\n".join(
+                  lines
+              )
+
+              with open(
+                  f"output/scenes/text_{number}.txt",
+                  "w",
+                  encoding="utf-8"
+              ) as file:
+
+                  file.write(final_text)
+
+          print(
+              "Title:",
+              title
+          )
+
+          print(
+              "Scenes:",
+              scene_count
+          )
+
+          PY
+
+
+      # ============================================================
+      # 5. GET AUDIO DURATION
+      # ============================================================
+
+      - name: Get Narration Duration
+        run: |
+          set -e
+
+          AUDIO_DURATION=$(ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            output/voice.wav)
+
+          echo "Audio duration:"
+          echo "$AUDIO_DURATION"
+
+          python - "$AUDIO_DURATION" <<'PY'
+          import sys
+
+          duration = float(
+              sys.argv[1]
+          )
+
+          if duration < 5:
+
+              raise Exception(
+                  "Narration audio is too short."
+              )
+
+          print(
+              "Narration duration is valid."
+          )
+
+          PY
+
+
+      # ============================================================
+      # 6. BUILD VERTICAL DOCUMENTARY VIDEO
+      # ============================================================
+
+      - name: Build Video
+        run: |
+          set -e
+
+          AUDIO_DURATION=$(ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            output/voice.wav)
+
+          SCENE_COUNT=$(find \
+            output/scenes \
+            -name 'text_*.txt' \
+            | wc -l)
+
+          echo "Scene count:"
+          echo "$SCENE_COUNT"
+
+          SCENE_DURATION=$(python - "$AUDIO_DURATION" "$SCENE_COUNT" <<'PY'
+          import sys
+
+          duration = float(
+              sys.argv[1]
+          )
+
+          count = int(
+              sys.argv[2]
+          )
+
+          value = duration / max(
+              count,
+              1
+          )
+
+          print(
+              f"{value:.3f}"
+          )
+
+          PY
+          )
+
+          echo "Each scene:"
+          echo "$SCENE_DURATION seconds"
+
+          rm -f output/scenes/concat.txt
+
+          for FILE in output/scenes/text_*.txt
+          do
+
+            NAME=$(basename \
+              "$FILE" \
+              .txt)
+
+            NUMBER=${NAME#text_}
+
+            OUTPUT="output/scenes/scene_${NUMBER}.mp4"
+
+            echo "Creating scene $NUMBER..."
+
+            ffmpeg \
+              -y \
+              -hide_banner \
+              -loglevel error \
+              -f lavfi \
+              -i "color=c=0b1020:s=1080x1920:r=30" \
+              -t "$SCENE_DURATION" \
+              -vf "
+              drawbox=x=40:y=40:w=1000:h=1840:
+              color=18233f@0.90:t=fill,
+
+              drawbox=x=75:y=270:w=930:h=4:
+              color=38bdf8@0.90:t=fill,
+
+              drawtext=
+              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:
+              textfile=output/title.txt:
+              expansion=none:
+              fontcolor=white:
+              fontsize=58:
+              x=90:
+              y=105:
+              line_spacing=10,
+
+              drawtext=
+              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:
+              textfile=${FILE}:
+              expansion=none:
+              fontcolor=white:
+              fontsize=43:
+              line_spacing=18:
+              x=90:
+              y=520:
+              box=1:
+              boxcolor=000000@0.35:
+              boxborderw=28,
+
+              drawtext=
+              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:
+              text='ODDLY BRITAIN':
+              expansion=none:
+              fontcolor=38bdf8:
+              fontsize=30:
+              x=90:
+              y=1785
+              " \
+              -an \
+              -c:v libx264 \
+              -preset veryfast \
+              -crf 23 \
+              -pix_fmt yuv420p \
+              "$OUTPUT"
+
+            printf "file '%s/%s'\n" \
+              "$PWD" \
+              "$OUTPUT" \
+              >> output/scenes/concat.txt
+
+          done
+
+          echo "Joining scenes..."
+
+          ffmpeg \
+            -y \
+            -hide_banner \
+            -loglevel error \
+            -f concat \
+            -safe 0 \
+            -i output/scenes/concat.txt \
+            -an \
+            -c:v libx264 \
+            -preset veryfast \
+            -crf 23 \
+            -pix_fmt yuv420p \
+            output/video_visuals.mp4
+
+          echo "Adding narration..."
+
+          ffmpeg \
+            -y \
+            -hide_banner \
+            -loglevel error \
+            -i output/video_visuals.mp4 \
+            -i output/voice.wav \
+            -map 0:v:0 \
+            -map 1:a:0 \
+            -c:v copy \
+            -c:a aac \
+            -b:a 128k \
+            -shortest \
+            -movflags +faststart \
+            output/oddly_britain_video.mp4
+
+          echo "Checking final video..."
+
+          test -s output/oddly_britain_video.mp4
+
+          ffprobe \
+            -v error \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 \
+            output/oddly_britain_video.mp4
+
+          echo ""
+          echo "======================================"
+          echo "ODDLY BRITAIN VIDEO CREATED SUCCESSFULLY"
+          echo "======================================"
+
+
+      # ============================================================
+      # 7. SAVE FINAL VIDEO + ASSETS
+      # ============================================================
+
+      - name: Save Final Video
         uses: actions/upload-artifact@v4
         with:
-          name: oddly-britain-video-assets
+          name: oddly-britain-final-video
           path: output/
