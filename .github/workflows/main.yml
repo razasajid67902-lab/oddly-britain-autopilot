@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  create-content:
+  create-video-assets:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Generate Oddly Britain content
+
+      - name: Generate Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -26,23 +27,21 @@ jobs:
           prompt = """
           You are the content director for a YouTube channel called Oddly Britain.
 
-          Channel niche:
+          Niche:
           British weird history, strange mysteries, bizarre places,
           unusual British culture and unbelievable true stories.
 
-          Create ONE original YouTube video for a UK audience.
+          Create ONE original 6-10 minute YouTube video for a UK audience.
 
-          Length: 6-10 minutes.
+          Choose an intriguing topic that is not extremely overused.
 
-          Choose an interesting topic that is not extremely overused.
-
-          The video must be:
+          Make it:
           - original
           - entertaining
           - factual in tone
           - conversational British English
           - suitable for monetization
-          - not copied from another creator
+          - not copied
           - not repetitive
 
           Return exactly:
@@ -53,24 +52,22 @@ jobs:
           TAGS:
           SCRIPT:
 
-          The script should have:
-          1. A powerful opening hook.
-          2. Strong curiosity throughout.
-          3. Storytelling.
-          4. Interesting details.
-          5. A satisfying ending.
+          SCRIPT must be a complete narration suitable for a 6-10 minute video.
+
+          Start with a powerful hook.
+          Maintain curiosity throughout.
+          Use storytelling and interesting details.
+          End with a satisfying conclusion.
 
           Do not knowingly invent facts.
-          If something is uncertain, clearly say it is uncertain.
+          If something is uncertain, clearly say so.
           """
 
           data = {
               "contents": [
                   {
                       "parts": [
-                          {
-                              "text": prompt
-                          }
+                          {"text": prompt}
                       ]
                   }
               ],
@@ -85,11 +82,9 @@ jobs:
               "x-goog-api-key": key
           }
 
-          last_error = None
-
           for attempt in range(1, 6):
               try:
-                  print(f"Gemini attempt {attempt}/5...")
+                  print(f"Script attempt {attempt}/5")
 
                   req = urllib.request.Request(
                       url,
@@ -98,56 +93,129 @@ jobs:
                       method="POST"
                   )
 
-                  with urllib.request.urlopen(req, timeout=120) as response:
+                  with urllib.request.urlopen(req, timeout=180) as response:
                       result = json.load(response)
 
                   text = result["candidates"][0]["content"]["parts"][0]["text"]
 
                   os.makedirs("output", exist_ok=True)
 
-                  with open(
-                      "output/content.txt",
-                      "w",
-                      encoding="utf-8"
-                  ) as f:
+                  with open("output/content.txt", "w", encoding="utf-8") as f:
                       f.write(text)
 
-                  print("SUCCESS: Content generated.")
-                  print(text)
-
+                  print("SCRIPT GENERATED SUCCESSFULLY")
                   break
 
-              except urllib.error.HTTPError as e:
-                  last_error = e
-                  print(f"Gemini HTTP error: {e.code}")
-
-                  if e.code in [429, 500, 502, 503, 504]:
-                      if attempt < 5:
-                          wait = attempt * 10
-                          print(f"Temporary error. Waiting {wait} seconds...")
-                          time.sleep(wait)
-                          continue
-
-                  raise
-
               except Exception as e:
-                  last_error = e
-                  print(f"Temporary error: {e}")
+                  print("Error:", e)
 
-                  if attempt < 5:
-                      wait = attempt * 10
-                      print(f"Retrying in {wait} seconds...")
-                      time.sleep(wait)
-                  else:
+                  if attempt == 5:
                       raise
 
-          else:
-              raise last_error
+                  time.sleep(attempt * 10)
 
           PY
 
-      - name: Save generated content
+
+      - name: Generate British Voice
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import json
+          import time
+          import base64
+          import urllib.request
+          import urllib.error
+
+          key = os.environ["GEMINI_API_KEY"]
+
+          with open("output/content.txt", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          if "SCRIPT:" in content:
+              script = content.split("SCRIPT:", 1)[1].strip()
+          else:
+              script = content
+
+          # Keep only the actual narration
+          if not script:
+              raise Exception("No script found")
+
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent"
+
+          data = {
+              "contents": [
+                  {
+                      "role": "user",
+                      "parts": [
+                          {
+                              "text": script,
+                              "speech_metadata": {
+                                  "style": "Natural British English documentary narrator. Warm, confident, mysterious, conversational, expressive and engaging. Clear pronunciation with varied pacing. Build suspense during mysterious moments."
+                              }
+                          }
+                      ]
+                  }
+              ],
+              "generationConfig": {
+                  "responseModalities": ["AUDIO"],
+                  "speechConfig": {
+                      "voiceConfig": {
+                          "voice": "Kore"
+                      }
+                  }
+              }
+          }
+
+          headers = {
+              "Content-Type": "application/json",
+              "x-goog-api-key": key
+          }
+
+          for attempt in range(1, 6):
+              try:
+                  print(f"TTS attempt {attempt}/5")
+
+                  req = urllib.request.Request(
+                      url,
+                      data=json.dumps(data).encode("utf-8"),
+                      headers=headers,
+                      method="POST"
+                  )
+
+                  with urllib.request.urlopen(req, timeout=300) as response:
+                      result = json.load(response)
+
+                  audio_b64 = (
+                      result["candidates"][0]
+                      ["content"]["parts"][0]
+                      ["inlineData"]["data"]
+                  )
+
+                  audio = base64.b64decode(audio_b64)
+
+                  with open("output/voice.wav", "wb") as f:
+                      f.write(audio)
+
+                  print("BRITISH VOICE GENERATED SUCCESSFULLY")
+                  print(f"Audio size: {len(audio)} bytes")
+                  break
+
+              except Exception as e:
+                  print("TTS Error:", e)
+
+                  if attempt == 5:
+                      raise
+
+                  time.sleep(attempt * 10)
+
+          PY
+
+
+      - name: Save Video Assets
         uses: actions/upload-artifact@v4
         with:
-          name: oddly-britain-content
-          path: output/content.txt
+          name: oddly-britain-video-assets
+          path: output/
