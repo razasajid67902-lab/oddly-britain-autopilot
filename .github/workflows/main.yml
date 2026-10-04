@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  gemini-test:
+  create-content:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test Gemini API
+      - name: Generate Oddly Britain content
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -19,15 +19,40 @@ jobs:
 
           key = os.environ["GEMINI_API_KEY"]
 
+          prompt = """
+          You are the content director for a YouTube channel called Oddly Britain.
+
+          Niche:
+          British weird history, mysteries, bizarre places, unusual British culture
+          and unbelievable true stories.
+
+          Create ONE completely original long-form YouTube video concept for a UK
+          audience, around 6-10 minutes.
+
+          Avoid famous overused topics. Choose something genuinely intriguing.
+
+          Return exactly these sections:
+
+          TITLE:
+          HOOK:
+          VIDEO DESCRIPTION:
+          TAGS:
+          SCRIPT:
+
+          The script must be engaging, factual in tone, conversational British English,
+          and structured with a strong hook, curiosity gaps, storytelling and a satisfying
+          ending.
+
+          Do not invent facts or present fictional claims as true.
+          """
+
           url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
           data = {
               "contents": [
                   {
                       "parts": [
-                          {
-                              "text": "Reply with exactly: ODDLY BRITAIN AI IS CONNECTED"
-                          }
+                          {"text": prompt}
                       ]
                   }
               ]
@@ -46,5 +71,18 @@ jobs:
           with urllib.request.urlopen(req) as response:
               result = json.load(response)
 
-          print(result["candidates"][0]["content"]["parts"][0]["text"])
+          text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+          os.makedirs("output", exist_ok=True)
+
+          with open("output/content.txt", "w", encoding="utf-8") as f:
+              f.write(text)
+
+          print(text)
           PY
+
+      - name: Save generated content
+        uses: actions/upload-artifact@v4
+        with:
+          name: oddly-britain-content
+          path: output/content.txt
