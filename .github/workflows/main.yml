@@ -9,6 +9,10 @@ jobs:
 
     steps:
 
+      # =========================
+      # 1. GENERATE SCRIPT
+      # =========================
+
       - name: Generate Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -17,34 +21,42 @@ jobs:
           import os
           import json
           import time
+          import random
           import urllib.request
           import urllib.error
 
-          key = os.environ["GEMINI_API_KEY"]
+          KEY = os.environ["GEMINI_API_KEY"]
 
-          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+          models = [
+              "gemini-3.8-flash",
+              "gemini-3.7-flash",
+              "gemini-3.6-flash",
+              "gemini-2.5-flash"
+          ]
 
           prompt = """
           You are the content director for a YouTube channel called Oddly Britain.
 
-          Niche:
+          NICHE:
           British weird history, strange mysteries, bizarre places,
           unusual British culture and unbelievable true stories.
 
-          Create ONE original 6-10 minute YouTube video for a UK audience.
+          Create ONE original YouTube video for a UK audience.
+
+          Target length: 6-10 minutes.
 
           Choose an intriguing topic that is not extremely overused.
 
-          Make it:
+          The video must be:
           - original
           - entertaining
           - factual in tone
           - conversational British English
           - suitable for monetization
-          - not copied
+          - not copied from another creator
           - not repetitive
 
-          Return exactly:
+          Return exactly these sections:
 
           TITLE:
           HOOK:
@@ -52,11 +64,13 @@ jobs:
           TAGS:
           SCRIPT:
 
-          SCRIPT must be a complete narration suitable for a 6-10 minute video.
+          The SCRIPT must be a complete narration suitable for a 6-10 minute
+          documentary-style YouTube video.
 
           Start with a powerful hook.
-          Maintain curiosity throughout.
-          Use storytelling and interesting details.
+          Maintain curiosity.
+          Use storytelling.
+          Include interesting details.
           End with a satisfying conclusion.
 
           Do not knowingly invent facts.
@@ -67,55 +81,113 @@ jobs:
               "contents": [
                   {
                       "parts": [
-                          {"text": prompt}
+                          {
+                              "text": prompt
+                          }
                       ]
                   }
               ],
               "generationConfig": {
                   "temperature": 0.8,
-                  "maxOutputTokens": 12000
+                  "maxOutputTokens": 8000
               }
           }
 
-          headers = {
-              "Content-Type": "application/json",
-              "x-goog-api-key": key
-          }
+          success = False
 
-          for attempt in range(1, 6):
-              try:
-                  print(f"Script attempt {attempt}/5")
+          for model in models:
 
-                  req = urllib.request.Request(
-                      url,
-                      data=json.dumps(data).encode("utf-8"),
-                      headers=headers,
-                      method="POST"
-                  )
+              url = (
+                  "https://generativelanguage.googleapis.com/"
+                  "v1beta/models/" + model + ":generateContent"
+              )
 
-                  with urllib.request.urlopen(req, timeout=180) as response:
-                      result = json.load(response)
+              print("Trying model:", model)
 
-                  text = result["candidates"][0]["content"]["parts"][0]["text"]
+              for attempt in range(1, 5):
 
-                  os.makedirs("output", exist_ok=True)
+                  try:
 
-                  with open("output/content.txt", "w", encoding="utf-8") as f:
-                      f.write(text)
+                      req = urllib.request.Request(
+                          url,
+                          data=json.dumps(data).encode("utf-8"),
+                          headers={
+                              "Content-Type": "application/json",
+                              "x-goog-api-key": KEY
+                          },
+                          method="POST"
+                      )
 
-                  print("SCRIPT GENERATED SUCCESSFULLY")
+                      with urllib.request.urlopen(
+                          req,
+                          timeout=180
+                      ) as response:
+
+                          result = json.load(response)
+
+                      text = (
+                          result["candidates"][0]
+                          ["content"]["parts"][0]["text"]
+                      )
+
+                      if len(text.strip()) < 500:
+                          raise Exception("Generated response is too short.")
+
+                      os.makedirs("output", exist_ok=True)
+
+                      with open(
+                          "output/content.txt",
+                          "w",
+                          encoding="utf-8"
+                      ) as f:
+                          f.write(text)
+
+                      print("SCRIPT SUCCESS using", model)
+
+                      success = True
+                      break
+
+                  except urllib.error.HTTPError as e:
+
+                      print(
+                          "HTTP error",
+                          e.code,
+                          "on",
+                          model,
+                          "attempt",
+                          attempt
+                      )
+
+                      if e.code not in [408, 429, 500, 502, 503, 504]:
+                          break
+
+                      if attempt < 4:
+                          wait = (2 ** attempt) + random.uniform(0, 3)
+                          print("Waiting", round(wait, 1), "seconds...")
+                          time.sleep(wait)
+
+                  except Exception as e:
+
+                      print("Error:", e)
+
+                      if attempt < 4:
+                          wait = (2 ** attempt) + random.uniform(0, 3)
+                          time.sleep(wait)
+
+              if success:
                   break
 
-              except Exception as e:
-                  print("Error:", e)
-
-                  if attempt == 5:
-                      raise
-
-                  time.sleep(attempt * 10)
+          if not success:
+              raise Exception(
+                  "All Gemini script models failed after retries."
+              )
 
           PY
 
+
+      # =========================
+      # 2. GENERATE VOICE
+      # =========================
 
       - name: Generate British Voice
         env:
@@ -125,13 +197,18 @@ jobs:
           import os
           import json
           import time
+          import random
           import base64
           import urllib.request
           import urllib.error
 
-          key = os.environ["GEMINI_API_KEY"]
+          KEY = os.environ["GEMINI_API_KEY"]
 
-          with open("output/content.txt", "r", encoding="utf-8") as f:
+          with open(
+              "output/content.txt",
+              "r",
+              encoding="utf-8"
+          ) as f:
               content = f.read()
 
           if "SCRIPT:" in content:
@@ -139,80 +216,177 @@ jobs:
           else:
               script = content
 
-          # Keep only the actual narration
           if not script:
-              raise Exception("No script found")
+              raise Exception("SCRIPT is empty.")
 
-          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent"
+          # Current Gemini TTS models.
+          tts_models = [
+              "gemini-3.8-flash-lite-tts",
+              "gemini-3.8-flash-tts"
+          ]
 
           data = {
-              "contents": [
+              "input": [
                   {
-                      "role": "user",
-                      "parts": [
+                      "type": "user_input",
+                      "content": [
                           {
+                              "type": "text",
                               "text": script,
-                              "speech_metadata": {
-                                  "style": "Natural British English documentary narrator. Warm, confident, mysterious, conversational, expressive and engaging. Clear pronunciation with varied pacing. Build suspense during mysterious moments."
-                              }
+                              "annotations": [
+                                  {
+                                      "type": "speech_metadata",
+                                      "style": (
+                                          "Natural British English documentary "
+                                          "narrator. Warm, confident, mysterious "
+                                          "and engaging. Clear pronunciation, "
+                                          "natural pacing and expressive delivery."
+                                      )
+                                  }
+                              ]
                           }
                       ]
                   }
               ],
-              "generationConfig": {
-                  "responseModalities": ["AUDIO"],
-                  "speechConfig": {
-                      "voiceConfig": {
+              "response_format": {
+                  "type": "audio"
+              },
+              "generation_config": {
+                  "speech_config": [
+                      {
                           "voice": "Kore"
                       }
-                  }
+                  ]
               }
           }
 
-          headers = {
-              "Content-Type": "application/json",
-              "x-goog-api-key": key
-          }
+          success = False
 
-          for attempt in range(1, 6):
-              try:
-                  print(f"TTS attempt {attempt}/5")
+          for model in tts_models:
 
-                  req = urllib.request.Request(
-                      url,
-                      data=json.dumps(data).encode("utf-8"),
-                      headers=headers,
-                      method="POST"
-                  )
+              url = (
+                  "https://generativelanguage.googleapis.com/"
+                  "v1beta/interactions"
+              )
 
-                  with urllib.request.urlopen(req, timeout=300) as response:
-                      result = json.load(response)
+              payload = dict(data)
+              payload["model"] = model
 
-                  audio_b64 = (
-                      result["candidates"][0]
-                      ["content"]["parts"][0]
-                      ["inlineData"]["data"]
-                  )
+              print("Trying TTS model:", model)
 
-                  audio = base64.b64decode(audio_b64)
+              for attempt in range(1, 5):
 
-                  with open("output/voice.wav", "wb") as f:
-                      f.write(audio)
+                  try:
 
-                  print("BRITISH VOICE GENERATED SUCCESSFULLY")
-                  print(f"Audio size: {len(audio)} bytes")
+                      req = urllib.request.Request(
+                          url,
+                          data=json.dumps(payload).encode("utf-8"),
+                          headers={
+                              "Content-Type": "application/json",
+                              "x-goog-api-key": KEY
+                          },
+                          method="POST"
+                      )
+
+                      with urllib.request.urlopen(
+                          req,
+                          timeout=300
+                      ) as response:
+
+                          result = json.load(response)
+
+                      audio_data = None
+
+                      # Current Interactions API stores audio
+                      # inside model_output steps.
+                      for step in result.get("steps", []):
+                          if step.get("type") == "model_output":
+
+                              for item in step.get("content", []):
+
+                                  if item.get("type") == "audio":
+                                      audio_data = item.get("data")
+
+                      # Also support convenience-style response.
+                      if not audio_data:
+                          output_audio = result.get("output_audio")
+
+                          if output_audio:
+                              audio_data = output_audio.get("data")
+
+                      if not audio_data:
+                          raise Exception(
+                              "No audio data returned by Gemini."
+                          )
+
+                      audio = base64.b64decode(audio_data)
+
+                      os.makedirs("output", exist_ok=True)
+
+                      with open(
+                          "output/voice.wav",
+                          "wb"
+                      ) as f:
+                          f.write(audio)
+
+                      print(
+                          "VOICE SUCCESS using",
+                          model
+                      )
+
+                      print(
+                          "Audio bytes:",
+                          len(audio)
+                      )
+
+                      success = True
+                      break
+
+                  except urllib.error.HTTPError as e:
+
+                      print(
+                          "TTS HTTP error",
+                          e.code,
+                          "on",
+                          model,
+                          "attempt",
+                          attempt
+                      )
+
+                      if e.code not in [408, 429, 500, 502, 503, 504]:
+                          break
+
+                      if attempt < 4:
+                          wait = (2 ** attempt) + random.uniform(0, 3)
+                          print(
+                              "Waiting",
+                              round(wait, 1),
+                              "seconds..."
+                          )
+                          time.sleep(wait)
+
+                  except Exception as e:
+
+                      print("TTS error:", e)
+
+                      if attempt < 4:
+                          wait = (2 ** attempt) + random.uniform(0, 3)
+                          time.sleep(wait)
+
+              if success:
                   break
 
-              except Exception as e:
-                  print("TTS Error:", e)
-
-                  if attempt == 5:
-                      raise
-
-                  time.sleep(attempt * 10)
+          if not success:
+              raise Exception(
+                  "All Gemini TTS models failed after retries."
+              )
 
           PY
 
+
+      # =========================
+      # 3. SAVE FILES
+      # =========================
 
       - name: Save Video Assets
         uses: actions/upload-artifact@v4
