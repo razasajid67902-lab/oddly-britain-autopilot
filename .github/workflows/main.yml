@@ -10,17 +10,31 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. GENERATE SCRIPT
+      # 1. INSTALL TOOLS
       # ============================================================
 
-      - name: Generate Script
+      - name: Install FFmpeg and ImageMagick
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg imagemagick python3-pil
+
+
+      # ============================================================
+      # 2. GENERATE STORY + VISUAL PLAN
+      # ============================================================
+
+      - name: Generate Story
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
         run: |
           set -e
 
-          python - <<'PY'
+          mkdir -p output
+          mkdir -p output/images
+          mkdir -p output/scenes
+
+          python3 - <<'PY'
           import os
           import json
           import time
@@ -37,51 +51,83 @@ jobs:
               "gemini-2.5-flash"
           ]
 
-          prompt = """
-          You are the content director for a YouTube channel called Oddly Britain.
+          prompt = r"""
+          You are the senior content director for a serious YouTube channel
+          called ODDLY BRITAIN.
 
-          CHANNEL NICHE:
+          CHANNEL:
           British weird history, strange mysteries, bizarre places,
-          unusual British culture and unbelievable true stories.
+          unusual British culture, forgotten events and unbelievable
+          TRUE stories.
 
           AUDIENCE:
-          Mainly United Kingdom, with United States and worldwide appeal.
+          Mainly UK, then USA and worldwide English-speaking viewers.
 
-          Create ONE original YouTube documentary-style video.
+          IMPORTANT:
+          We do NOT want a slideshow.
+          We want a cinematic documentary-style YouTube video.
 
-          Target length:
-          6-10 minutes.
+          Choose ONE strong topic.
 
-          Choose an intriguing topic that is not extremely overused.
+          The topic should have:
+          - a powerful mystery or surprising fact
+          - a strong visual history
+          - enough real historical/location imagery
+          - a satisfying reveal/payoff
+          - genuine entertainment value
 
-          The video must be:
-          - original
-          - entertaining
-          - factual in tone
-          - conversational British English
-          - suitable for monetization
-          - not copied from another creator
-          - not repetitive
+          Avoid extremely generic topics.
 
-          Return EXACTLY:
+          The narration should be approximately 7-10 minutes.
 
-          TITLE:
-          HOOK:
-          DESCRIPTION:
-          TAGS:
-          SCRIPT:
-
-          The SCRIPT must be a complete narration.
-
-          Start with a powerful hook.
-          Build curiosity.
-          Use storytelling.
-          Include interesting details.
-          Keep the viewer interested.
-          End with a satisfying conclusion.
+          Write in natural British English.
 
           Do not knowingly invent facts.
-          If something is uncertain, clearly say so.
+          If a detail is uncertain, say so in the narration.
+
+          Return EXACTLY these sections:
+
+          TITLE:
+          DESCRIPTION:
+          TAGS:
+          HOOK:
+          SCRIPT:
+
+          VISUALS:
+
+          Under VISUALS create EXACTLY 24 lines.
+
+          Format every line:
+
+          01 | SEARCH QUERY | SCENE PURPOSE
+          02 | SEARCH QUERY | SCENE PURPOSE
+
+          Continue until 24.
+
+          Each SEARCH QUERY must describe a real visual that could
+          reasonably be found in Wikimedia Commons.
+
+          Prefer:
+          - historical photographs
+          - paintings
+          - old maps
+          - buildings
+          - streets
+          - landscapes
+          - newspaper illustrations
+          - historical people when relevant
+          - documents
+          - objects
+          - locations
+
+          Do NOT make visual queries such as:
+          "scary AI image"
+          "cinematic mysterious man"
+          "fantasy castle"
+
+          We need REAL or historically documented visuals.
+
+          The video should feel like a real documentary.
           """
 
           data = {
@@ -95,8 +141,8 @@ jobs:
                   }
               ],
               "generationConfig": {
-                  "temperature": 0.8,
-                  "maxOutputTokens": 8000
+                  "temperature": 0.75,
+                  "maxOutputTokens": 12000
               }
           }
 
@@ -104,18 +150,20 @@ jobs:
 
           for model in models:
 
+              print("Trying:", model)
+
               url = (
                   "https://generativelanguage.googleapis.com/"
-                  "v1beta/models/" + model + ":generateContent"
+                  "v1beta/models/" +
+                  model +
+                  ":generateContent"
               )
-
-              print("Trying script model:", model)
 
               for attempt in range(1, 5):
 
                   try:
 
-                      request = urllib.request.Request(
+                      req = urllib.request.Request(
                           url,
                           data=json.dumps(data).encode("utf-8"),
                           headers={
@@ -126,8 +174,8 @@ jobs:
                       )
 
                       with urllib.request.urlopen(
-                          request,
-                          timeout=180
+                          req,
+                          timeout=240
                       ) as response:
 
                           result = json.load(response)
@@ -137,93 +185,78 @@ jobs:
                           ["content"]["parts"][0]["text"]
                       )
 
-                      if len(text.strip()) < 500:
+                      if len(text) < 2000:
                           raise Exception(
-                              "Gemini returned an unexpectedly short response."
+                              "Generated content too short."
                           )
-
-                      os.makedirs("output", exist_ok=True)
 
                       with open(
                           "output/content.txt",
                           "w",
                           encoding="utf-8"
-                      ) as file:
+                      ) as f:
 
-                          file.write(text)
+                          f.write(text)
 
-                      print("SCRIPT GENERATED SUCCESSFULLY")
-                      print("Model:", model)
+                      print("STORY GENERATED")
+                      print("MODEL:", model)
 
                       success = True
                       break
 
-                  except urllib.error.HTTPError as error:
+                  except urllib.error.HTTPError as e:
 
                       print(
-                          "HTTP error:",
-                          error.code,
-                          "Attempt:",
+                          "HTTP ERROR",
+                          e.code,
+                          "attempt",
                           attempt
                       )
 
-                      if error.code not in [
+                      if e.code not in [
                           408, 429, 500, 502, 503, 504
                       ]:
                           break
 
                       if attempt < 4:
-
-                          wait = (
-                              (2 ** attempt)
-                              + random.uniform(0, 3)
+                          time.sleep(
+                              (2 ** attempt) +
+                              random.uniform(0, 3)
                           )
 
-                          print(
-                              "Temporary error. Waiting",
-                              round(wait, 1),
-                              "seconds..."
-                          )
+                  except Exception as e:
 
-                          time.sleep(wait)
-
-                  except Exception as error:
-
-                      print("Error:", error)
+                      print("ERROR:", e)
 
                       if attempt < 4:
-
-                          wait = (
-                              (2 ** attempt)
-                              + random.uniform(0, 3)
+                          time.sleep(
+                              (2 ** attempt) +
+                              random.uniform(0, 3)
                           )
-
-                          time.sleep(wait)
 
               if success:
                   break
 
           if not success:
-
               raise Exception(
-                  "All Gemini script models failed."
+                  "Gemini failed to generate the story."
               )
 
           PY
 
 
       # ============================================================
-      # 2. GENERATE BRITISH AI VOICE
+      # 3. GENERATE VOICE
       # ============================================================
 
-      - name: Generate British Voice
+      - name: Generate Voice
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
         run: |
           set -e
 
-          python - <<'PY'
+          python3 - <<'PY'
           import os
           import json
           import time
@@ -238,55 +271,56 @@ jobs:
               "output/content.txt",
               "r",
               encoding="utf-8"
-          ) as file:
+          ) as f:
 
-              content = file.read()
+              content = f.read()
 
-          if "SCRIPT:" in content:
+          if "SCRIPT:" not in content:
+              raise Exception("SCRIPT section missing.")
 
-              script = content.split(
-                  "SCRIPT:",
+          script = content.split(
+              "SCRIPT:",
+              1
+          )[1]
+
+          if "VISUALS:" in script:
+              script = script.split(
+                  "VISUALS:",
                   1
-              )[1].strip()
+              )[0]
 
-          else:
+          script = script.strip()
 
-              script = content.strip()
-
-          if not script:
-
+          if len(script) < 1000:
               raise Exception(
-                  "No narration script found."
+                  "Narration script too short."
               )
 
-          tts_models = [
+          models = [
               "gemini-3.8-flash-lite-tts",
               "gemini-3.8-flash-tts"
           ]
 
-          base_payload = {
+          payload_base = {
 
               "input": [
                   {
                       "type": "user_input",
-
                       "content": [
                           {
                               "type": "text",
-
                               "text": script,
 
                               "annotations": [
                                   {
                                       "type": "speech_metadata",
-
-                                      "style": (
-                                          "Natural British English documentary "
-                                          "narrator. Warm, confident, mysterious, "
-                                          "expressive and engaging. Clear British "
-                                          "pronunciation with natural pacing. "
-                                          "Build suspense during mysterious moments."
-                                      )
+                                      "style":
+                                      "Natural British English documentary "
+                                      "narrator. Warm, intelligent, confident, "
+                                      "slightly mysterious and expressive. "
+                                      "Use natural pacing and pauses. "
+                                      "Sound like a professional UK documentary "
+                                      "presenter, not a robotic AI voice."
                                   }
                               ]
                           }
@@ -309,28 +343,24 @@ jobs:
 
           success = False
 
-          for model in tts_models:
+          for model in models:
 
-              print(
-                  "Trying voice model:",
-                  model
-              )
-
-              payload = dict(base_payload)
-
+              payload = dict(payload_base)
               payload["model"] = model
 
-              url = (
-                  "https://generativelanguage.googleapis.com/"
-                  "v1beta/interactions"
+              print(
+                  "Trying TTS:",
+                  model
               )
 
               for attempt in range(1, 5):
 
                   try:
 
-                      request = urllib.request.Request(
-                          url,
+                      req = urllib.request.Request(
+                          "https://generativelanguage.googleapis.com/"
+                          "v1beta/interactions",
+
                           data=json.dumps(
                               payload
                           ).encode("utf-8"),
@@ -344,7 +374,7 @@ jobs:
                       )
 
                       with urllib.request.urlopen(
-                          request,
+                          req,
                           timeout=300
                       ) as response:
 
@@ -381,7 +411,6 @@ jobs:
                           )
 
                           if output_audio:
-
                               audio_data = (
                                   output_audio.get(
                                       "data"
@@ -389,298 +418,520 @@ jobs:
                               )
 
                       if not audio_data:
-
                           raise Exception(
-                              "No audio data returned."
+                              "No audio returned."
                           )
 
                       audio = base64.b64decode(
                           audio_data
                       )
 
-                      os.makedirs(
-                          "output",
-                          exist_ok=True
-                      )
-
                       with open(
                           "output/voice.wav",
                           "wb"
-                      ) as file:
+                      ) as f:
 
-                          file.write(audio)
+                          f.write(audio)
 
                       if len(audio) < 1000:
-
                           raise Exception(
-                              "Audio file is unexpectedly small."
+                              "Audio too small."
                           )
 
                       print(
-                          "BRITISH VOICE GENERATED SUCCESSFULLY"
-                      )
-
-                      print(
-                          "Audio bytes:",
-                          len(audio)
+                          "VOICE CREATED:",
+                          len(audio),
+                          "bytes"
                       )
 
                       success = True
-
                       break
 
-                  except urllib.error.HTTPError as error:
+                  except urllib.error.HTTPError as e:
 
                       print(
-                          "TTS HTTP error:",
-                          error.code,
-                          "Attempt:",
-                          attempt
+                          "TTS HTTP",
+                          e.code
                       )
 
-                      if error.code not in [
+                      if e.code not in [
                           408, 429, 500, 502, 503, 504
                       ]:
                           break
 
                       if attempt < 4:
-
-                          wait = (
-                              (2 ** attempt)
-                              + random.uniform(0, 3)
+                          time.sleep(
+                              (2 ** attempt) +
+                              random.uniform(0, 3)
                           )
 
-                          print(
-                              "Waiting",
-                              round(wait, 1),
-                              "seconds..."
-                          )
+                  except Exception as e:
 
-                          time.sleep(wait)
-
-                  except Exception as error:
-
-                      print(
-                          "TTS error:",
-                          error
-                      )
+                      print("TTS ERROR:", e)
 
                       if attempt < 4:
-
-                          wait = (
-                              (2 ** attempt)
-                              + random.uniform(0, 3)
+                          time.sleep(
+                              (2 ** attempt) +
+                              random.uniform(0, 3)
                           )
-
-                          time.sleep(wait)
 
               if success:
                   break
 
           if not success:
-
               raise Exception(
-                  "All Gemini TTS models failed."
+                  "All TTS models failed."
               )
 
           PY
 
 
       # ============================================================
-      # 3. INSTALL FFMPEG
+      # 4. EXTRACT VISUAL QUERIES
       # ============================================================
 
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ffmpeg
-
-
-      # ============================================================
-      # 4. PREPARE SCRIPT FOR VIDEO
-      # ============================================================
-
-      - name: Prepare Video Scenes
+      - name: Extract Visual Plan
         run: |
           set -e
 
-          mkdir -p output/scenes
+          python3 - <<'PY'
 
-          python - <<'PY'
-          import os
           import re
 
           with open(
               "output/content.txt",
               "r",
               encoding="utf-8"
-          ) as file:
+          ) as f:
 
-              content = file.read()
+              text = f.read()
 
-          title = "Oddly Britain"
-
-          for line in content.splitlines():
-
-              if line.strip().upper().startswith(
-                  "TITLE:"
-              ):
-
-                  title = line.split(
-                      ":",
-                      1
-                  )[1].strip()
-
-                  break
-
-          if "SCRIPT:" in content:
-
-              script = content.split(
-                  "SCRIPT:",
-                  1
-              )[1]
-
-          else:
-
-              script = content
-
-          script = re.sub(
-              r'\s+',
-              ' ',
-              script
-          ).strip()
-
-          if len(script) < 200:
-
+          if "VISUALS:" not in text:
               raise Exception(
-                  "Script is too short."
+                  "VISUALS section missing."
               )
 
-          sentences = re.split(
-              r'(?<=[.!?])\s+',
-              script
-          )
-
-          sentences = [
-              s.strip()
-              for s in sentences
-              if len(s.strip()) > 15
-          ]
-
-          if not sentences:
-
-              raise Exception(
-                  "Could not split script."
-              )
-
-          # Create 8 scenes where possible.
-          scene_count = min(
-              8,
-              len(sentences)
-          )
-
-          scene_count = max(
-              1,
-              scene_count
-          )
-
-          chunks = [
-              []
-              for _ in range(scene_count)
-          ]
-
-          for index, sentence in enumerate(
-              sentences
-          ):
-
-              scene_index = int(
-                  index * scene_count
-                  / len(sentences)
-              )
-
-              if scene_index >= scene_count:
-                  scene_index = scene_count - 1
-
-              chunks[scene_index].append(
-                  sentence
-              )
-
-          with open(
-              "output/title.txt",
-              "w",
-              encoding="utf-8"
-          ) as file:
-
-              file.write(title)
-
-          for number, chunk in enumerate(
-              chunks,
+          section = text.split(
+              "VISUALS:",
               1
-          ):
+          )[1]
 
-              text = " ".join(chunk)
+          lines = []
 
-              # Wrap text for vertical video.
-              words = text.split()
+          for line in section.splitlines():
 
-              lines = []
+              match = re.match(
+                  r'^\s*(\d{1,2})\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$',
+                  line
+              )
 
-              current = ""
+              if match:
 
-              for word in words:
-
-                  test = (
-                      current + " " + word
-                  ).strip()
-
-                  if len(test) > 38:
-
-                      if current:
-                          lines.append(
-                              current
-                          )
-
-                      current = word
-
-                  else:
-
-                      current = test
-
-              if current:
-                  lines.append(
-                      current
+                  number = int(
+                      match.group(1)
                   )
 
-              final_text = "\n".join(
-                  lines
+                  query = match.group(2).strip()
+                  purpose = match.group(3).strip()
+
+                  lines.append(
+                      (
+                          number,
+                          query,
+                          purpose
+                      )
+                  )
+
+          if len(lines) < 15:
+              raise Exception(
+                  "Too few visual queries."
               )
 
-              with open(
-                  f"output/scenes/text_{number}.txt",
-                  "w",
-                  encoding="utf-8"
-              ) as file:
+          lines = sorted(
+              lines,
+              key=lambda x: x[0]
+          )
 
-                  file.write(final_text)
+          with open(
+              "output/visual_plan.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              for number, query, purpose in lines:
+
+                  f.write(
+                      f"{number:02d}|{query}|{purpose}\n"
+                  )
 
           print(
-              "Title:",
-              title
+              "VISUALS FOUND:",
+              len(lines)
           )
+
+          PY
+
+
+      # ============================================================
+      # 5. DOWNLOAD REAL WIKIMEDIA VISUALS
+      # ============================================================
+
+      - name: Download Real Visuals
+        run: |
+          set -e
+
+          python3 - <<'PY'
+
+          import os
+          import urllib.parse
+          import urllib.request
+          import json
+          import time
+
+          os.makedirs(
+              "output/images",
+              exist_ok=True
+          )
+
+          USER_AGENT = (
+              "OddlyBritainAutopilot/1.0 "
+              "(YouTube documentary project)"
+          )
+
+          with open(
+              "output/visual_plan.txt",
+              "r",
+              encoding="utf-8"
+          ) as f:
+
+              rows = [
+                  line.strip()
+                  for line in f
+                  if line.strip()
+              ]
+
+          downloaded = 0
+
+          for row in rows:
+
+              number, query, purpose = row.split(
+                  "|",
+                  2
+              )
+
+              print(
+                  "\nSearching:",
+                  number,
+                  query
+              )
+
+              params = {
+                  "action": "query",
+                  "format": "json",
+                  "generator": "search",
+                  "gsrsearch": query,
+                  "gsrnamespace": "6",
+                  "gsrlimit": "8",
+                  "prop": "imageinfo",
+                  "iiprop": "url|mime|size|extmetadata",
+                  "iiurlwidth": "1400"
+              }
+
+              url = (
+                  "https://commons.wikimedia.org/w/api.php?"
+                  +
+                  urllib.parse.urlencode(
+                      params
+                  )
+              )
+
+              try:
+
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": USER_AGENT
+                      }
+                  )
+
+                  with urllib.request.urlopen(
+                      req,
+                      timeout=30
+                  ) as response:
+
+                      data = json.load(response)
+
+                  pages = data.get(
+                      "query",
+                      {}
+                  ).get(
+                      "pages",
+                      {}
+                  )
+
+                  selected = None
+
+                  for page in pages.values():
+
+                      info = page.get(
+                          "imageinfo",
+                          []
+                      )
+
+                      if not info:
+                          continue
+
+                      item = info[0]
+
+                      mime = item.get(
+                          "mime",
+                          ""
+                      )
+
+                      if not mime.startswith(
+                          "image/"
+                      ):
+                          continue
+
+                      image_url = (
+                          item.get(
+                              "thumburl"
+                          )
+                          or
+                          item.get(
+                              "url"
+                          )
+                      )
+
+                      if not image_url:
+                          continue
+
+                      selected = (
+                          page,
+                          item
+                      )
+
+                      break
+
+                  if not selected:
+
+                      print(
+                          "No image found for",
+                          number
+                      )
+
+                      continue
+
+                  page, item = selected
+
+                  image_url = (
+                      item.get(
+                          "thumburl"
+                      )
+                      or
+                      item.get(
+                          "url"
+                      )
+                  )
+
+                  extension = ".jpg"
+
+                  mime = item.get(
+                      "mime",
+                      ""
+                  )
+
+                  if "png" in mime:
+                      extension = ".png"
+
+                  filename = (
+                      f"output/images/"
+                      f"scene_{int(number):02d}"
+                      f"{extension}"
+                  )
+
+                  request = urllib.request.Request(
+                      image_url,
+                      headers={
+                          "User-Agent": USER_AGENT
+                      }
+                  )
+
+                  with urllib.request.urlopen(
+                      request,
+                      timeout=60
+                  ) as response:
+
+                      image_data = response.read()
+
+                  if len(image_data) < 5000:
+
+                      print(
+                          "Image too small."
+                      )
+
+                      continue
+
+                  with open(
+                      filename,
+                      "wb"
+                  ) as f:
+
+                      f.write(image_data)
+
+                  downloaded += 1
+
+                  print(
+                      "Downloaded:",
+                      filename
+                  )
+
+                  time.sleep(0.4)
+
+              except Exception as e:
+
+                  print(
+                      "VISUAL ERROR:",
+                      e
+                  )
+
+          print(
+              "\nTOTAL VISUALS:",
+              downloaded
+          )
+
+          if downloaded < 8:
+
+              raise Exception(
+                  "Too few real visuals were downloaded."
+              )
+
+          PY
+
+
+      # ============================================================
+      # 6. NORMALIZE IMAGES
+      # ============================================================
+
+      - name: Prepare Images
+        run: |
+          set -e
+
+          mkdir -p output/clean
+
+          for FILE in output/images/*
+          do
+
+            if [ -f "$FILE" ]; then
+
+              BASE=$(basename "$FILE")
+              NAME="${BASE%.*}"
+
+              echo "Preparing $BASE"
+
+              ffmpeg \
+                -y \
+                -hide_banner \
+                -loglevel error \
+                -i "$FILE" \
+                -vf "
+                  scale=1400:2500:
+                  force_original_aspect_ratio=increase,
+                  crop=1400:2500,
+                  setsar=1
+                " \
+                -frames:v 1 \
+                "output/clean/${NAME}.jpg"
+
+            fi
+
+          done
+
+          COUNT=$(find output/clean \
+            -name '*.jpg' | wc -l)
+
+          echo "Prepared images:"
+          echo "$COUNT"
+
+          if [ "$COUNT" -lt 8 ]; then
+            echo "Not enough prepared images."
+            exit 1
+          fi
+
+
+      # ============================================================
+      # 7. CREATE SCENE LIST
+      # ============================================================
+
+      - name: Create Scene Plan
+        run: |
+          set -e
+
+          python3 - <<'PY'
+
+          import os
+          import glob
+          import re
+
+          files = sorted(
+              glob.glob(
+                  "output/clean/*.jpg"
+              )
+          )
+
+          rows = []
+
+          for file in files:
+
+              name = os.path.basename(
+                  file
+              )
+
+              match = re.search(
+                  r'scene_(\d+)',
+                  name
+              )
+
+              if match:
+
+                  number = int(
+                      match.group(1)
+                  )
+
+                  rows.append(
+                      (
+                          number,
+                          file
+                      )
+                  )
+
+          rows.sort()
+
+          with open(
+              "output/scenes.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              for number, file in rows:
+
+                  f.write(
+                      f"{number}|{file}\n"
+                  )
 
           print(
               "Scenes:",
-              scene_count
+              len(rows)
           )
 
           PY
 
 
       # ============================================================
-      # 5. GET AUDIO DURATION
+      # 8. BUILD CINEMATIC VISUAL VIDEO
       # ============================================================
 
-      - name: Get Narration Duration
+      - name: Build Cinematic Video
         run: |
           set -e
 
@@ -690,52 +941,12 @@ jobs:
             -of default=noprint_wrappers=1:nokey=1 \
             output/voice.wav)
 
-          echo "Audio duration:"
-          echo "$AUDIO_DURATION"
+          SCENE_COUNT=$(cat \
+            output/scenes.txt | wc -l)
 
-          python - "$AUDIO_DURATION" <<'PY'
-          import sys
-
-          duration = float(
-              sys.argv[1]
-          )
-
-          if duration < 5:
-
-              raise Exception(
-                  "Narration audio is too short."
-              )
-
-          print(
-              "Narration duration is valid."
-          )
-
-          PY
-
-
-      # ============================================================
-      # 6. BUILD VERTICAL DOCUMENTARY VIDEO
-      # ============================================================
-
-      - name: Build Video
-        run: |
-          set -e
-
-          AUDIO_DURATION=$(ffprobe \
-            -v error \
-            -show_entries format=duration \
-            -of default=noprint_wrappers=1:nokey=1 \
-            output/voice.wav)
-
-          SCENE_COUNT=$(find \
-            output/scenes \
-            -name 'text_*.txt' \
-            | wc -l)
-
-          echo "Scene count:"
-          echo "$SCENE_COUNT"
-
-          SCENE_DURATION=$(python - "$AUDIO_DURATION" "$SCENE_COUNT" <<'PY'
+          SCENE_DURATION=$(python3 \
+            - "$AUDIO_DURATION" \
+            "$SCENE_COUNT" <<'PY'
           import sys
 
           duration = float(
@@ -746,97 +957,89 @@ jobs:
               sys.argv[2]
           )
 
-          value = duration / max(
-              count,
-              1
-          )
-
           print(
-              f"{value:.3f}"
+              max(
+                  8.0,
+                  duration / max(count, 1)
+              )
           )
 
           PY
           )
 
-          echo "Each scene:"
-          echo "$SCENE_DURATION seconds"
+          echo "Audio:"
+          echo "$AUDIO_DURATION"
 
-          rm -f output/scenes/concat.txt
+          echo "Scenes:"
+          echo "$SCENE_COUNT"
 
-          for FILE in output/scenes/text_*.txt
+          echo "Scene duration:"
+          echo "$SCENE_DURATION"
+
+          rm -f output/concat.txt
+
+          INDEX=0
+
+          while IFS='|' read -r NUMBER FILE
           do
 
-            NAME=$(basename \
-              "$FILE" \
-              .txt)
+            INDEX=$((INDEX + 1))
 
-            NUMBER=${NAME#text_}
+            OUT="output/scenes/scene_${INDEX}.mp4"
 
-            OUTPUT="output/scenes/scene_${NUMBER}.mp4"
+            echo ""
+            echo "================================"
+            echo "Rendering scene $INDEX"
+            echo "================================"
 
-            echo "Creating scene $NUMBER..."
+            if [ $((INDEX % 2)) -eq 0 ]; then
+
+              ZOOM="
+                zoompan=
+                z='min(zoom+0.0008,1.15)':
+                x='iw/2-(iw/zoom/2)':
+                y='ih/2-(ih/zoom/2)':
+                d=1:
+                s=1080x1920:
+                fps=30
+              "
+
+            else
+
+              ZOOM="
+                zoompan=
+                z='min(zoom+0.0008,1.15)':
+                x='(iw-iw/zoom)*on/(720*30)':
+                y='(ih-ih/zoom)*0.5':
+                d=1:
+                s=1080x1920:
+                fps=30
+              "
+
+            fi
 
             ffmpeg \
               -y \
               -hide_banner \
               -loglevel error \
-              -f lavfi \
-              -i "color=c=0b1020:s=1080x1920:r=30" \
+              -loop 1 \
+              -i "$FILE" \
               -t "$SCENE_DURATION" \
-              -vf "
-              drawbox=x=40:y=40:w=1000:h=1840:
-              color=18233f@0.90:t=fill,
-
-              drawbox=x=75:y=270:w=930:h=4:
-              color=38bdf8@0.90:t=fill,
-
-              drawtext=
-              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:
-              textfile=output/title.txt:
-              expansion=none:
-              fontcolor=white:
-              fontsize=58:
-              x=90:
-              y=105:
-              line_spacing=10,
-
-              drawtext=
-              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:
-              textfile=${FILE}:
-              expansion=none:
-              fontcolor=white:
-              fontsize=43:
-              line_spacing=18:
-              x=90:
-              y=520:
-              box=1:
-              boxcolor=000000@0.35:
-              boxborderw=28,
-
-              drawtext=
-              fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:
-              text='ODDLY BRITAIN':
-              expansion=none:
-              fontcolor=38bdf8:
-              fontsize=30:
-              x=90:
-              y=1785
-              " \
+              -vf "$ZOOM" \
               -an \
               -c:v libx264 \
               -preset veryfast \
               -crf 23 \
               -pix_fmt yuv420p \
-              "$OUTPUT"
+              "$OUT"
 
-            printf "file '%s/%s'\n" \
-              "$PWD" \
-              "$OUTPUT" \
-              >> output/scenes/concat.txt
+            printf "file '%s'\n" \
+              "$PWD/$OUT" \
+              >> output/concat.txt
 
-          done
+          done < output/scenes.txt
 
-          echo "Joining scenes..."
+          echo "Joining cinematic scenes..."
 
           ffmpeg \
             -y \
@@ -844,21 +1047,28 @@ jobs:
             -loglevel error \
             -f concat \
             -safe 0 \
-            -i output/scenes/concat.txt \
+            -i output/concat.txt \
             -an \
             -c:v libx264 \
             -preset veryfast \
             -crf 23 \
             -pix_fmt yuv420p \
-            output/video_visuals.mp4
+            output/visual_video.mp4
 
-          echo "Adding narration..."
+
+      # ============================================================
+      # 9. ADD NARRATION
+      # ============================================================
+
+      - name: Add Narration
+        run: |
+          set -e
 
           ffmpeg \
             -y \
             -hide_banner \
             -loglevel error \
-            -i output/video_visuals.mp4 \
+            -i output/visual_video.mp4 \
             -i output/voice.wav \
             -map 0:v:0 \
             -map 1:a:0 \
@@ -869,27 +1079,158 @@ jobs:
             -movflags +faststart \
             output/oddly_britain_video.mp4
 
-          echo "Checking final video..."
-
-          test -s output/oddly_britain_video.mp4
-
+          echo ""
+          echo "FINAL VIDEO:"
+          
           ffprobe \
             -v error \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
             output/oddly_britain_video.mp4
 
-          echo ""
-          echo "======================================"
-          echo "ODDLY BRITAIN VIDEO CREATED SUCCESSFULLY"
-          echo "======================================"
+
+      # ============================================================
+      # 10. CREATE THUMBNAIL
+      # ============================================================
+
+      - name: Create Thumbnail
+        run: |
+          set -e
+
+          FIRST_IMAGE=$(find \
+            output/clean \
+            -name '*.jpg' \
+            | sort \
+            | head -n 1)
+
+          if [ -z "$FIRST_IMAGE" ]; then
+            echo "No thumbnail image found."
+            exit 1
+          fi
+
+          ffmpeg \
+            -y \
+            -hide_banner \
+            -loglevel error \
+            -i "$FIRST_IMAGE" \
+            -vf "
+              scale=1280:720:
+              force_original_aspect_ratio=increase,
+              crop=1280:720,
+              eq=contrast=1.08:saturation=1.12
+            " \
+            -frames:v 1 \
+            output/thumbnail.jpg
+
+          echo "Thumbnail created."
 
 
       # ============================================================
-      # 7. SAVE FINAL VIDEO + ASSETS
+      # 11. EXTRACT TITLE / DESCRIPTION / TAGS
       # ============================================================
 
-      - name: Save Final Video
+      - name: Create YouTube Metadata
+        run: |
+          set -e
+
+          python3 - <<'PY'
+
+          import re
+
+          with open(
+              "output/content.txt",
+              "r",
+              encoding="utf-8"
+          ) as f:
+
+              text = f.read()
+
+          def get_section(
+              name,
+              next_name
+          ):
+
+              pattern = (
+                  re.escape(name)
+                  +
+                  r'\s*(.*?)'
+                  +
+                  re.escape(next_name)
+              )
+
+              match = re.search(
+                  pattern,
+                  text,
+                  re.S |
+                  re.I
+              )
+
+              if match:
+                  return match.group(1).strip()
+
+              return ""
+
+          title = get_section(
+              "TITLE:",
+              "DESCRIPTION:"
+          )
+
+          description = get_section(
+              "DESCRIPTION:",
+              "TAGS:"
+          )
+
+          tags = get_section(
+              "TAGS:",
+              "HOOK:"
+          )
+
+          if not title:
+              title = "Oddly Britain"
+
+          with open(
+              "output/youtube_title.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  title[:100]
+              )
+
+          with open(
+              "output/youtube_description.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  description
+              )
+
+          with open(
+              "output/youtube_tags.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  tags
+              )
+
+          print(
+              "TITLE:",
+              title
+          )
+
+          PY
+
+
+      # ============================================================
+      # 12. SAVE FINAL ARTIFACT
+      # ============================================================
+
+      - name: Save Final Video Package
         uses: actions/upload-artifact@v4
         with:
           name: oddly-britain-final-video
