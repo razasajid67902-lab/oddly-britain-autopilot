@@ -19,20 +19,28 @@ jobs:
 
           key = os.environ["GEMINI_API_KEY"]
 
-          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
           data = {
-              "contents": [{
-                  "parts": [{
-                      "text": "Reply with exactly: ODDLY BRITAIN AI IS CONNECTED"
-                  }]
-              }]
+              "contents": [
+                  {
+                      "parts": [
+                          {
+                              "text": "Reply with exactly: ODDLY BRITAIN AI IS CONNECTED"
+                          }
+                      ]
+                  }
+              ]
           }
 
           req = urllib.request.Request(
               url,
-              data=json.dumps(data).encode(),
-              headers={"Content-Type": "application/json"}
+              data=json.dumps(data).encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": key
+              },
+              method="POST"
           )
 
           with urllib.request.urlopen(req) as response:
