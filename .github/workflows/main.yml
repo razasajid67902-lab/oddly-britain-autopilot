@@ -1,0 +1,13 @@
+name: Oddly Britain Autopilot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test system
+        run: |
+          echo "Oddly Britain Autopilot is working!"
+          echo "Video factory is ready."
