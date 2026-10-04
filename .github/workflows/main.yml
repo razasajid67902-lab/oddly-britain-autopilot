@@ -4,10 +4,39 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  gemini-test:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Test system
+      - name: Test Gemini API
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "Oddly Britain Autopilot is working!"
-          echo "Video factory is ready."
+          python - <<'PY'
+          import os
+          import urllib.request
+          import json
+
+          key = os.environ["GEMINI_API_KEY"]
+
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key
+
+          data = {
+              "contents": [{
+                  "parts": [{
+                      "text": "Reply with exactly: ODDLY BRITAIN AI IS CONNECTED"
+                  }]
+              }]
+          }
+
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(data).encode(),
+              headers={"Content-Type": "application/json"}
+          )
+
+          with urllib.request.urlopen(req) as response:
+              result = json.load(response)
+
+          print(result["candidates"][0]["content"]["parts"][0]["text"])
+          PY
